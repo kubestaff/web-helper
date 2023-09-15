@@ -10,13 +10,19 @@ import (
 )
 
 type Server struct {
-	URL        string
-	body       string
-	baseServer *httptest.Server
+	body           string
+	baseTestServer *httptest.Server
+	baseServer     *http.Server
+	opts           Options
 }
 
 func (s *Server) Stop() {
-	s.baseServer.Close()
+	if s.baseServer != nil {
+		s.baseServer.Close()
+		return
+	}
+
+	s.baseTestServer.Close()
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -39,21 +45,45 @@ func (s *Server) PrintFile(fileName string, variables map[string]string) {
 }
 
 func (s *Server) Start() {
-	s.baseServer.Start()
-	fmt.Println("started at " + s.baseServer.URL)
+	if s.baseServer != nil {
+		fmt.Printf("started at http://127.0.0.1%s\n", s.baseServer.Addr)
+		err := s.baseServer.ListenAndServe()
+		if err != nil {
+			log.Fatalln(err)
+		}
+	}
+
+	s.baseTestServer.Start()
+	fmt.Printf("started at %s\n", s.baseTestServer.URL)
 	select {}
 }
 
-func NewServer() *Server {
-	mainServer := &Server{}
+func (s *Server) GetUrl() string {
+	if s.baseServer != nil {
+		return s.baseServer.Addr
+	}
+
+	return s.baseTestServer.URL
+}
+
+func NewServer(opts Options) *Server {
+	mainServer := &Server{
+		opts: opts,
+	}
 
 	router := http.NewServeMux()
 	router.Handle("/", mainServer)
 	router.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
 
-	baseServer := httptest.NewUnstartedServer(router)
-	mainServer.baseServer = baseServer
-	mainServer.URL = baseServer.URL
+	if opts.Port > 0 {
+		server := &http.Server{
+			Addr:    fmt.Sprintf(":%d", opts.Port),
+			Handler: router,
+		}
+		mainServer.baseServer = server
+	} else {
+		mainServer.baseTestServer = httptest.NewUnstartedServer(router)
+	}
 
 	return mainServer
 }

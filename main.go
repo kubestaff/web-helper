@@ -3,8 +3,11 @@ package main
 import "github.com/kubestaff/web-helper/server"
 
 func main() {
+	opts := server.Options{
+		Port: 34567,
+	}
 	// we create the simplified web server
-	s := server.NewServer()
+	s := server.NewServer(opts)
 
 	// we close the server at the end
 	defer s.Stop()
