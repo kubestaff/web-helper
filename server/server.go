@@ -11,8 +11,8 @@ import (
 
 type Server struct {
 	URL        string
+	body       string
 	baseServer *httptest.Server
-	messages   []string
 }
 
 func (s *Server) Stop() {
@@ -20,27 +20,22 @@ func (s *Server) Stop() {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	msg := strings.Join(s.messages, "<br>")
-
-	fmt.Fprint(w, msg)
+	fmt.Fprint(w, s.body)
 }
 
-func (s *Server) Printf(format string, a ...any) {
-	s.messages = append(s.messages, fmt.Sprintf(format, a...))
-}
-
-func (s *Server) Println(msg string) {
-	s.messages = append(s.messages, msg)
-}
-
-func (s *Server) PrintFile(fileName string) {
+func (s *Server) PrintFile(fileName string, variables map[string]string) {
 	fileBytes, err := os.ReadFile(fileName)
 	if err != nil {
 		log.Fatalln(err)
 		return
 	}
 
-	s.messages = append(s.messages, string(fileBytes))
+	fileContent := string(fileBytes)
+	for key, value := range variables {
+		fileContent = strings.ReplaceAll(fileContent, key, value)
+	}
+
+	s.body = fileContent
 }
 
 func (s *Server) Start() {
