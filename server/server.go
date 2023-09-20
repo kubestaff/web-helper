@@ -4,58 +4,66 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 )
 
+const DefaultPort = 2345
+
 type Server struct {
-	body           string
-	baseTestServer *httptest.Server
-	baseServer     *http.Server
-	opts           Options
+	body       string
+	baseServer *http.Server
+	opts       Options
+	router     *http.ServeMux
 }
 
 func (s *Server) Stop() {
 	if s.baseServer != nil {
 		s.baseServer.Close()
-		return
 	}
-
-	s.baseTestServer.Close()
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprint(w, s.body)
-}
+func (s *Server) PrintFile(url, fileName string, variables map[string]string) {
+	s.router.HandleFunc(url, func(writer http.ResponseWriter, request *http.Request) {
+		fileBytes, err := os.ReadFile(fileName)
+		if err != nil {
+			http.Error(writer, err.Error(), 500)
+			return
+		}
 
-func (s *Server) PrintFile(fileName string, variables map[string]string) {
-	fileBytes, err := os.ReadFile(fileName)
-	if err != nil {
-		log.Fatalln(err)
-		return
-	}
+		fileContent := string(fileBytes)
+		for key, value := range variables {
+			fileContent = strings.ReplaceAll(fileContent, key, value)
+		}
 
-	fileContent := string(fileBytes)
-	for key, value := range variables {
-		fileContent = strings.ReplaceAll(fileContent, key, value)
-	}
+		queryParams := request.URL.Query()
+		for key, values := range queryParams {
+			for _, value := range values {
+				fileContent = strings.ReplaceAll(fileContent, "%"+key+"%", value)
+			}
+		}
 
-	s.body = fileContent
+		postParams := request.PostForm
+
+		for key, values := range postParams {
+			for _, value := range values {
+				fileContent = strings.ReplaceAll(fileContent, "%"+key+"%", value)
+			}
+		}
+
+		fmt.Fprintf(writer, fileContent)
+	})
 }
 
 func (s *Server) Start() {
-	if s.baseServer != nil {
-		fmt.Printf("started at http://127.0.0.1%s\n", s.baseServer.Addr)
-		err := s.baseServer.ListenAndServe()
-		if err != nil {
-			log.Fatalln(err)
-		}
-	}
+	svr := s.initBaseServer()
+	s.baseServer = svr
 
-	s.baseTestServer.Start()
-	fmt.Printf("started at %s\n", s.baseTestServer.URL)
-	select {}
+	fmt.Printf("started at http://127.0.0.1%s\n", s.baseServer.Addr)
+	err := s.baseServer.ListenAndServe()
+	if err != nil {
+		log.Fatalln(err)
+	}
 }
 
 func (s *Server) GetUrl() string {
@@ -63,26 +71,29 @@ func (s *Server) GetUrl() string {
 		return s.baseServer.Addr
 	}
 
-	return s.baseTestServer.URL
+	return ""
+}
+
+func (s *Server) initBaseServer() *http.Server {
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%d", s.opts.Port),
+		Handler: s.router,
+	}
+
+	return server
 }
 
 func NewServer(opts Options) *Server {
-	mainServer := &Server{
-		opts: opts,
+	if opts.Port == 0 {
+		opts.Port = DefaultPort
 	}
 
 	router := http.NewServeMux()
-	router.Handle("/", mainServer)
 	router.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
 
-	if opts.Port > 0 {
-		server := &http.Server{
-			Addr:    fmt.Sprintf(":%d", opts.Port),
-			Handler: router,
-		}
-		mainServer.baseServer = server
-	} else {
-		mainServer.baseTestServer = httptest.NewUnstartedServer(router)
+	mainServer := &Server{
+		opts:   opts,
+		router: router,
 	}
 
 	return mainServer
