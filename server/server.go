@@ -23,6 +23,41 @@ func (s *Server) Stop() {
 	}
 }
 
+func (s *Server) Handle(url string, handler func(inputs map[string]string) (filename string, placeholders map[string]string)) {
+	s.router.HandleFunc(url, func(writer http.ResponseWriter, request *http.Request) {
+		inputs := make(map[string]string)
+
+		queryParams := request.URL.Query()
+		for key, values := range queryParams {
+			for _, value := range values {
+				inputs[key] = value
+			}
+		}
+
+		postParams := request.PostForm
+
+		for key, values := range postParams {
+			for _, value := range values {
+				inputs[key] = value
+			}
+		}
+
+		fileName, variables := handler(inputs)
+		fileBytes, err := os.ReadFile(fileName)
+		if err != nil {
+			http.Error(writer, err.Error(), 500)
+			return
+		}
+
+		fileContent := string(fileBytes)
+		for key, value := range variables {
+			fileContent = strings.ReplaceAll(fileContent, key, value)
+		}
+
+		fmt.Fprintf(writer, fileContent)
+	})
+}
+
 func (s *Server) PrintFile(url, fileName string, variables map[string]string) {
 	s.router.HandleFunc(url, func(writer http.ResponseWriter, request *http.Request) {
 		fileBytes, err := os.ReadFile(fileName)
