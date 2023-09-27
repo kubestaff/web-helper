@@ -1,9 +1,14 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -23,43 +28,117 @@ func (s *Server) Stop() {
 	}
 }
 
-func (s *Server) Handle(url string, handler func(inputs map[string]string) (filename string, placeholders map[string]string)) {
+func (s *Server) inputsFromRequest(request *http.Request) url.Values {
+	inputs := request.URL.Query()
+
+	postParams := request.PostForm
+	for key, values := range postParams {
+		inputs[key] = values
+	}
+
+	return inputs
+}
+
+type Output struct {
+	Data any
+	Code int
+}
+
+type JsonError struct {
+	Code  int
+	Error string
+}
+
+func (s *Server) jsonErr(writer http.ResponseWriter, err error, code int) {
+	if code == 0 {
+		code = 200
+	}
+
+	jsonErr := JsonError{
+		Code:  code,
+		Error: err.Error(),
+	}
+
+	writer.WriteHeader(jsonErr.Code)
+
+	jsonData, err := json.Marshal(jsonErr)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	_, err = writer.Write(jsonData)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+type Input struct {
+	url.Values
+	body io.Reader
+}
+
+func (i Input) Scan(target any) error {
+	err := json.NewDecoder(i.body).Decode(target)
+	if err == io.EOF {
+		return errors.New("empty request data provided")
+	}
+
+	return err
+}
+
+func (s *Server) HandleJSON(url string, handler func(input Input) (o Output)) {
 	s.router.HandleFunc(url, func(writer http.ResponseWriter, request *http.Request) {
-		inputs := make(map[string]string)
+		writer.Header().Set("Content-Type", "application/json")
 
-		queryParams := request.URL.Query()
-		for key, values := range queryParams {
-			for _, value := range values {
-				inputs[key] = value
-			}
-		}
+		defer request.Body.Close()
 
-		postParams := request.PostForm
-
-		for key, values := range postParams {
-			for _, value := range values {
-				inputs[key] = value
-			}
-		}
-
-		fileName, variables := handler(inputs)
-		fileBytes, err := os.ReadFile(fileName)
+		body, err := io.ReadAll(request.Body)
 		if err != nil {
-			http.Error(writer, err.Error(), 500)
+			s.jsonErr(writer, fmt.Errorf("can't read request body: %v", err), 0)
 			return
 		}
 
-		fileContent := string(fileBytes)
-		for key, value := range variables {
-			fileContent = strings.ReplaceAll(fileContent, key, value)
+		buffer := bytes.NewBuffer(body)
+
+		requestValues := s.inputsFromRequest(request)
+		inpt := Input{
+			Values: requestValues,
+			body:   buffer,
+		}
+		output := handler(inpt)
+
+		if output.Code == 0 {
+			output.Code = 200
 		}
 
-		fmt.Fprintf(writer, fileContent)
+		jsonData, err := json.Marshal(output.Data)
+		if err != nil {
+			s.jsonErr(writer, err, 0)
+			return
+		}
+
+		writer.WriteHeader(output.Code)
+
+		_, err = writer.Write(jsonData)
+		if err != nil {
+			s.jsonErr(writer, err, 0)
+			return
+		}
 	})
 }
 
-func (s *Server) PrintFile(url, fileName string, variables map[string]string) {
+func (s *Server) Handle(url string, handler func(input Input) (filename string, placeholders map[string]string)) {
 	s.router.HandleFunc(url, func(writer http.ResponseWriter, request *http.Request) {
+		values := s.inputsFromRequest(request)
+
+		inpt := Input{
+			Values: values,
+			body:   request.Body,
+		}
+
+		fileName, variables := handler(inpt)
 		fileBytes, err := os.ReadFile(fileName)
 		if err != nil {
 			http.Error(writer, err.Error(), 500)
@@ -69,21 +148,6 @@ func (s *Server) PrintFile(url, fileName string, variables map[string]string) {
 		fileContent := string(fileBytes)
 		for key, value := range variables {
 			fileContent = strings.ReplaceAll(fileContent, key, value)
-		}
-
-		queryParams := request.URL.Query()
-		for key, values := range queryParams {
-			for _, value := range values {
-				fileContent = strings.ReplaceAll(fileContent, "%"+key+"%", value)
-			}
-		}
-
-		postParams := request.PostForm
-
-		for key, values := range postParams {
-			for _, value := range values {
-				fileContent = strings.ReplaceAll(fileContent, "%"+key+"%", value)
-			}
 		}
 
 		fmt.Fprintf(writer, fileContent)
