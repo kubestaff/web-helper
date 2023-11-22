@@ -91,6 +91,9 @@ func (i Input) Scan(target any) error {
 func (s *Server) HandleJSON(url string, handler func(input Input) (o Output)) {
 	s.router.HandleFunc(url, func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
+		writer.Header().Set("Access-Control-Allow-Origin", "*")
+		writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE")
+		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 		defer request.Body.Close()
 
