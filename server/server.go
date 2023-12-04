@@ -95,6 +95,11 @@ func (s *Server) HandleJSON(url string, handler func(input Input) (o Output)) {
 		writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE")
 		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
+		if request.Method == http.MethodOptions {
+			writer.WriteHeader(http.StatusOK)
+			return
+		}
+
 		defer request.Body.Close()
 
 		body, err := io.ReadAll(request.Body)
